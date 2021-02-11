@@ -1,0 +1,544 @@
+---
+title: "Explanatory Model Building"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+    #css: ../../../styles.css
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = 'center')
+```
+
+# MVP
+
+We've looked at a few different ways in which we can build models this week, including how to prepare them properly. This weekend we'll build a multiple linear regression model on a dataset which will need some preparation. The data can be found in the data folder, along with a data dictionary
+
+We want to investigate the avocado dataset, and, in particular, to model the `AveragePrice` of the avocados. Use the tools we've worked with this week in order to prepare your dataset and find appropriate predictors. Once you've built your model use the validation techniques discussed on Wednesday to evaluate it. Feel free to focus either on building an *explanatory* or a *predictive* model, or both if you are feeling energetic!
+
+As part of the MVP we want you not to just run the code but also have a go at **interpreting the results** and write your thinking in comments in your script.
+
+**Hints and tips**
+
+-   `region` may lead to many dummy variables. Think carefully about whether to include this variable or not (there is no one 'right' answer to this!)
+-   Think about whether each variable is *categorical* or *numerical*. If categorical, make sure that the variable is represented as a factor.
+-   We will not treat this data as a time series, so `Date` will not be needed in your models, but can you extract any useful features out of `Date` before you discard it?
+-   If you want to build a predictive model, consider using either `leaps` or `glmulti` to help with this.
+
+------------------------------------------------------------------------
+
+## Researching and prearing our data
+
+Here is what we found looking for information on the 'avocado' data. I am accepting this info as reliable.
+
+"The table represents weekly retail scan data for National retail volume (units) and price. Retail scan data comes directly from retailers’ cash registers based on actual retail sales of Hass avocados. Starting in 2013, the table below reflects an expanded, multi-outlet retail data set. Multi-outlet reporting includes an aggregation of the following channels: grocery, mass, club, drug, dollar and military. The Average Price (of avocados) in the table reflects a per unit (per avocado) cost, even when multiple units (avocados) are sold in bags. The Product Lookup codes (PLU’s) in the table are only for Hass avocados. Other varieties of avocados (e.g. greenskins) are not included in this table."
+
+Relevant info for understanding 'obscure' variable names:
+
+AveragePrice - the average price of a single avocado
+Region - the city or region of the observation, i.e. where avocados were sold.
+Total Volume - Total number of avocados sold
+4046 - Total number of small avocados sold (PLU 4046)
+4225 - Total number of medium avocados sold (PLU 4225)
+4770 - Total number of large avocados sold (PLU 4770)
+
+Apparently average price recorded here is not related to bag size so we can drop these variables. Also region doesn't seem to have a direct relation with average price so it may be safe and beneficial to drop it too.
+
+the x1 variable records the week in which sales were recorded in a 52 weeks per year format. Although our brief is not interested in time series and forecasting we can investigate if seasonality has an impact on average price. Avocados are very sensitive to variations in temperature so weather patterns may impact production and potentially prices. We have decided to keep only data for years 2015 - 2017 dropping partial 2018 data. This could help especially if seasons play some role on average price.
+
+So, we'll focus on 'average price, ''type' and 'total volume'. We'll use 'x1, 'date' and 'year' to engineer variables which will enable us to explore seasonality.
+
+
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(ggfortify)
+library(GGally)
+library(lubridate)
+library(modelr)
+```
+
+
+### cleaning var names and subsetting 
+
+```{r initial dataset with clean and renamed variable names}
+avocado_df_exp <- read_csv("data/avocado.csv") %>% 
+  clean_names() %>% 
+  select(x1:x4770, type:year) %>% 
+  rename(week = "x1",
+         small = "x4046",
+         medium = "x4225",
+         large = "x4770") %>% 
+  filter(date <= "2017-12-31")
+```
+
+
+```{r engineering variables}
+avocado_tidy <- avocado_df_exp %>%
+  mutate(month = as.character(month(date))) %>% 
+  mutate(season = case_when( 
+           month == "12" | month == "1" | month == "2" ~ "winter",
+           month == "3" | month == "4" | month == "5" ~ "spring",
+           month == "6" | month == "7" | month == "8" ~ "summer",
+           month == "9" | month == "10" | month == "11" ~ "autumn")
+         ) %>% 
+  mutate(type = as.factor(type)) %>% 
+  mutate(season = as.factor(season)) %>% 
+  mutate(year = as.factor(year)) %>% 
+  #mutate(week = as.factor(week))
+  select(-date)
+```
+
+
+------------------------------------------------------------------------
+
+We suspect 'total volume' to be strongly correlated to avocado sizes so we test and if so drop avocado sizes.
+
+```{r}
+avocado_tidy %>% 
+  select(total_volume:large) %>% 
+  ggpairs()
+```
+
+```{r}
+avocado_tidy <- avocado_tidy %>% 
+  select(-c(small, medium, large))
+```
+
+Let's look at summary statistics
+
+```{r}
+summary(avocado_tidy)
+```
+
+total volume is extremely skewed so this will affect our models. We need to look into this.
+
+
+
+```{r}
+total_vol_by_type <- avocado_tidy %>% 
+  group_by(type) %>% 
+  summarise(avg_total_vol= mean(total_volume)) %>%
+  mutate(pct = prop.table(avg_total_vol) * 100)
+
+total_vol_by_type
+```
+More than 97 % of avocados in the data is conventional. It makes sense to focus on this type for average price modelling
+
+```{r}
+avocado_tidy_conv <- avocado_tidy %>% 
+  filter(type == "conventional") %>% 
+  select(-type)
+avocado_tidy_org <- avocado_tidy %>% 
+  filter(type == "organic") %>% 
+  select(-type)
+```
+
+
+
+## Visualising our data
+
+```{r}
+both_types <- ggplot(avocado_tidy) +
+ aes(x = total_volume, y = average_price) +
+ geom_point(size = 1L, colour = "#0c4c8a") +
+ geom_smooth(span = 0.75) +
+ scale_x_continuous(trans = "log") +
+ scale_y_continuous(trans = "log") +
+ labs(title = "Average price decreases when Total Volume increseas") +
+ theme_minimal()
+
+conventional <- ggplot(avocado_tidy_conv) +
+ aes(x = total_volume, y = average_price) +
+ geom_point(size = 1L, colour = "#0c4c8a") +
+ geom_smooth(span = 0.75) +
+ scale_x_continuous(trans = "log") +
+ scale_y_continuous(trans = "log") +
+ labs(title = "Average price decreases when Total Volume increseas") +
+ theme_minimal()
+
+organic <- ggplot(avocado_tidy_org) +
+ aes(x = total_volume, y = average_price) +
+ geom_point(size = 1L, colour = "#0c4c8a") +
+ geom_smooth(span = 0.75) +
+ scale_x_continuous(trans = "log") +
+ scale_y_continuous(trans = "log") +
+ labs(title = "Average price decreases when Total Volume increseas") +
+ theme_minimal()
+
+both_types
+conventional
+organic
+```
+
+
+
+
+```{r}
+ggplot(avocado_df_exp) +
+ aes(x = date, y = average_price, colour = type) +
+ geom_line(size = 1L) +
+ scale_color_hue() +
+ labs(title = "Average Price has a certain degree of seasonality") +
+ theme_minimal() +
+ facet_wrap(vars(type))
+```
+
+
+```{r}
+ggplot(avocado_df_exp) +
+ aes(x = type, y = average_price, fill = type) +
+ geom_boxplot() +
+ scale_fill_hue() +
+ labs(title = "As expected average price is higher for organic type") +
+ theme_minimal()
+```
+
+```{r}
+ggplot(avocado_df_exp) +
+ aes(x = date, weight = total_volume) +
+ geom_bar(fill = "#0c4c8a") +
+ labs(title = "Total Volume has also a pattern of seasonality") +
+ theme_minimal()
+```
+
+
+
+
+## Model development
+
+### First Predictor - **type**
+
+```{r fig.height=20, fig.width=20}
+avocado_tidy %>% 
+   ggpairs(aes(colour = type, alpha = 0.5))
+```
+
+```{r fig.height=20, fig.width=20}
+avocado_tidy %>% 
+   ggpairs(aes(colour = season, alpha = 0.5))
+```
+
+#### average price + type
+
+```{r}
+mod_type <- lm(log(average_price) ~ type, data = avocado_tidy)
+mod_type
+summary(mod_type)
+```
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type)
+```
+
+#### average price + total volume
+
+```{r}
+mod_total_volume <- lm(average_price ~ log(total_volume), data = avocado_tidy)
+mod_total_volume
+summary(mod_total_volume)
+
+```
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_total_volume)
+```
+
+#### average price + month
+
+```{r}
+mod_month <- lm(average_price ~ month, data = avocado_tidy)
+mod_month
+summary(mod_month)
+```
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_month)
+```
+
+#### average price + week
+
+```{r}
+mod_week <- lm(average_price ~ week, data = avocado_tidy)
+mod_week
+summary(mod_week)
+```
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_week)
+```
+
+#### average price + season
+
+```{r}
+mod_season <- lm(average_price ~ season, data = avocado_tidy)
+mod_season
+summary(mod_season)
+```
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_season)
+```
+
+#### average price + year
+
+```{r}
+mod_year <- lm(average_price ~ year, data = avocado_tidy)
+mod_year
+summary(mod_year)
+```
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_year)
+```
+
+### Second Predictor - **month**
+
+```{r}
+remaining_resid <- avocado_tidy %>% 
+  add_residuals(mod_type) %>% 
+  select(-c(average_price, type))
+```
+
+```{r fig.height=20, fig.width=20}
+remaining_resid %>% 
+  ggpairs(aes(colour = season, alpha = 0.5))
+```
+
+#### avg_p + type + week
+
+```{r}
+mod_type_week <- lm(average_price ~ type + week, data = avocado_tidy)
+mod_type_week
+summary(mod_type_week)
+```
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_week)
+```
+
+#### avg_p + type + total volume
+
+```{r}
+mod_type_total_volume <- lm(average_price ~ type + log(total_volume), data = avocado_tidy)
+mod_type_total_volume
+summary(mod_type_total_volume)
+```
+
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_total_volume)
+```
+
+#### avg_p + type + year
+
+```{r}
+mod_type_year <- lm(average_price ~ type + year, data = avocado_tidy)
+mod_type_year
+summary(mod_type_year)
+```
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_year)
+```
+
+#### avg_p + type + month
+
+```{r}
+mod_type_month <- lm(average_price ~ type + month, data = avocado_tidy)
+mod_type_month
+summary(mod_type_month)
+```
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_month)
+```
+
+##### running avova() to confirm 'month'
+
+```{r}
+anova(mod_type, mod_type_month)
+```
+
+
+
+#### avg_p + type + season
+
+```{r}
+mod_type_season <- lm(average_price ~ type + season, data = avocado_tidy)
+mod_type_season
+summary(mod_type_season)
+```
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_season)
+```
+
+### Third Predictor - **year**
+
+```{r}
+remaining_resid <- avocado_tidy %>% 
+  add_residuals(mod_month) %>% 
+  select(-c(average_price, type, month))
+```
+
+```{r fig.height=20, fig.width=20}
+remaining_resid %>% 
+  ggpairs(aes(colour = season, alpha = 0.5))
+```
+
+#### avg_p + type + month + total volume
+
+```{r}
+mod_type_month_total_volume <- lm(average_price ~ type + month + log(total_volume), data = avocado_tidy)
+mod_type_month_total_volume
+summary(mod_type_month_total_volume)
+```
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_month_total_volume)
+```
+
+#### avg_p + type + month + season
+
+```{r}
+mod_type_month_season <- lm(average_price ~ type + month + season, data = avocado_tidy)
+mod_type_month_season
+summary(mod_type_month_season)
+```
+
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_month_season)
+```
+
+#### avg_p + type + month + year
+
+```{r}
+mod_type_month_year <- lm(average_price ~ type + month + year, data = avocado_tidy)
+mod_type_month_year
+summary(mod_type_month_year)
+```
+
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_month_year)
+```
+
+### Forth Predictor - **total volume**
+
+```{r}
+remaining_resid <- avocado_tidy %>% 
+  add_residuals(mod_year) %>% 
+  select(-c(average_price, type, month, year))
+```
+
+```{r fig.height=20, fig.width=20}
+remaining_resid %>% 
+  ggpairs(aes(colour = season, alpha = 0.5))
+```
+
+#### avg_p + type + month + year + total volume 
+
+```{r}
+mod_type_month_year_total_volume <- lm(average_price ~ type + month + year + total_volume, data = avocado_tidy)
+mod_type_month_year_total_volume
+summary(mod_type_month_year_total_volume)
+```
+
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_month_year_total_volume)
+```
+
+#### avg_p + type + month + year + week
+
+```{r}
+mod_type_month_year_week <- lm(average_price ~ type + month + year + week, data = avocado_tidy)
+mod_type_month_year_week
+summary(mod_type_month_year_week)
+```
+
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_month_year_week)
+```
+
+#### avg_p + type + month + year + season
+
+```{r}
+mod_type_month_year_season <- lm(average_price ~ type + month + year + season, data = avocado_tidy)
+mod_type_month_year_season
+summary(mod_type_month_year_season)
+```
+
+
+```{r}
+par(mfrow = c(2, 2)) 
+plot(mod_type_month_year_season)
+```
+
+
+### Interactions
+
+```{r}
+average_price_residual <- avocado_tidy %>% 
+  add_residuals(mod_type_month_year_total_volume) %>% 
+  select(-average_price)
+```
+
+
+
+```{r}
+coplot(resid ~ log(total_volume) | month,
+       panel = function(x, y, ...){
+         points(x, y)
+         abline(lm(y ~ x), col = "blue")
+       },
+       data = average_price_residual, columns=6)
+```
+```{r}
+average_price_residual %>%
+  ggplot(aes(x = log(total_volume), y = resid, colour = type)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+#### type - month
+
+```{r}
+mod_int_t1 <- lm(average_price ~ type + month + year + total_volume + type:month, data = avocado_tidy)
+summary(mod_int_t1)
+```
+
+
+#### month - year
+
+```{r}
+mod_int_t2 <- lm(average_price ~ type + month + year + total_volume + month:year, data = avocado_tidy)
+summary(mod_int_t2)
+```
+
+```{r}
+relaimpo::calc.relimp(mod_type_month_year_total_volume, type = "lmg", rela = TRUE)
+```
+
+
+
+

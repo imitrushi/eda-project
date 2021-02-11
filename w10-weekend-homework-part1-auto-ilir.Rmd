@@ -1,0 +1,441 @@
+---
+title: "Predictive Model Building - B"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+    #css: ../../../styles.css
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = 'center')
+```
+
+# MVP
+
+We've looked at a few different ways in which we can build models this week, including how to prepare them properly. This weekend we'll build a multiple linear regression model on a dataset which will need some preparation. The data can be found in the data folder, along with a data dictionary
+
+We want to investigate the avocado dataset, and, in particular, to model the `AveragePrice` of the avocados. Use the tools we've worked with this week in order to prepare your dataset and find appropriate predictors. Once you've built your model use the validation techniques discussed on Wednesday to evaluate it. Feel free to focus either on building an *explanatory* or a *predictive* model, or both if you are feeling energetic!
+
+As part of the MVP we want you not to just run the code but also have a go at **intepreting the results** and write your thinking in comments in your script.
+
+**Hints and tips**
+
+-   `region` may lead to many dummy variables. Think carefully about whether to include this variable or not (there is no one 'right' answer to this!)
+-   Think about whether each variable is *categorical* or *numerical*. If categorical, make sure that the variable is represented as a factor.
+-   We will not treat this data as a time series, so `Date` will not be needed in your models, but can you extract any useful features out of `Date` before you discard it?
+-   If you want to build a predictive model, consider using either `leaps` or `glmulti` to help with this.
+
+
+Here we are 'trusting' the machine to do the heavy lifting, so little intervention expected...
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(ggfortify)
+library(GGally)
+library(leaps)
+library(glmulti)
+library(lubridate)
+```
+
+```{r initial dataset with clean variable names}
+avocado_df <- read_csv("data/avocado.csv") %>% 
+  clean_names()
+```
+
+```{r minimal transformation}
+avocado_tidy <- avocado_df %>% 
+  filter(region != "TotalUS") %>% 
+  mutate(type = as.factor(type)) %>% 
+  mutate(year = as.factor(year)) 
+```
+
+
+```{r further transformation removing var date}
+avocado_tidy_with_region <- avocado_df %>% 
+  filter(region != "TotalUS") %>% 
+  mutate(type = as.factor(type)) %>% 
+  mutate(year = as.factor(year)) %>% 
+  mutate(region = as.factor(region)) %>% 
+  select(-date)
+```
+
+```{r factorising var x1 }
+avocado_tidy_with_region_factorised <- avocado_df %>% 
+  filter(region != "TotalUS") %>% 
+  mutate(type = as.factor(type)) %>% 
+  mutate(year = as.factor(year)) %>% 
+  mutate(region = as.factor(region)) %>% 
+  mutate(x1 = as.factor(x1)) %>% 
+  select(-date)
+```
+
+```{r removing var region having only total USA}
+avocado_tidy_total_usa <- avocado_df %>% 
+  filter(region == "TotalUS") %>% 
+  mutate(type = as.factor(type)) %>% 
+  mutate(year = as.factor(year)) %>% 
+  select(-c(date, region))
+```
+
+```{r total USA with factorised x1}
+avocado_tidy_total_usa_factorised <- avocado_df %>% 
+  filter(region == "TotalUS") %>% 
+  mutate(type = as.factor(type)) %>% 
+  mutate(year = as.factor(year)) %>% 
+  mutate(x1 = as.factor(x1)) %>%
+  select(-c(date, region))
+```
+
+```{r Engineering var month and var season}
+avocado_tidy_season_total_usa <- avocado_df %>%
+  mutate(month = as.character(month(date))) %>% 
+  mutate(season = case_when( 
+           month == "12" | month == "1" | month == "2" ~ "winter",
+           month == "3" | month == "4" | month == "5" ~ "spring",
+           month == "6" | month == "7" | month == "8" ~ "summer",
+           month == "9" | month == "10" | month == "11" ~ "autumn")
+         ) %>% 
+  filter(region == "TotalUS") %>% 
+  mutate(type = as.factor(type)) %>% 
+  mutate(year = as.factor(year)) %>% 
+  mutate(season = as.factor(season)) %>% 
+  select(-c(date, region))
+```
+
+```{r season with factorised x1}
+avocado_tidy_season_total_usa_factorised <- avocado_df %>%
+  mutate(month = as.character(month(date))) %>% 
+  mutate(season = case_when( 
+           month == "12" | month == "1" | month == "2" ~ "winter",
+           month == "3" | month == "4" | month == "5" ~ "spring",
+           month == "6" | month == "7" | month == "8" ~ "summer",
+           month == "9" | month == "10" | month == "11" ~ "autumn")
+         ) %>% 
+  filter(region == "TotalUS") %>% 
+  mutate(type = as.factor(type)) %>% 
+  mutate(year = as.factor(year)) %>% 
+  mutate(season = as.factor(season)) %>% 
+  mutate(x1 = as.factor(x1)) %>% 
+  select(-c(date, region))
+```
+
+------------------------------------------------------------------------
+
+## Scenarios
+
+Automated model development using the **forward selection** method from **regsubsets()** function in **leaps** package.
+
+### Keeping **region** in
+
+```{r forward-selection-region}
+regsubsets_forward_region <- regsubsets(average_price ~ ., data = avocado_tidy_with_region, method = "forward")
+```
+
+### Keeping **region** in - factorised
+
+```{r forward-selection-region-facatorised}
+regsubsets_forward_region_factorised <- regsubsets(average_price ~ ., data = avocado_tidy_with_region_factorised, method = "forward")
+```
+
+### "region" removed, only total USA
+
+```{r forward-selection-total-usa}
+regsubsets_forward_total_usa <- regsubsets(average_price ~ ., data = avocado_tidy_total_usa, method = "forward")
+```
+
+### "region" removed, only total USA - factorised
+
+```{r forward-selection-total-usa-factorised}
+regsubsets_forward_total_usa_factorised <- regsubsets(average_price ~ ., data = avocado_tidy_total_usa_factorised, method = "forward")
+```
+
+### Adding *season* to 'total USA'
+
+```{r forward-selection-season-total-usa}
+regsubsets_forward_season_total_usa <- regsubsets(average_price ~ ., data = avocado_tidy_season_total_usa, method = "forward")
+```
+
+### Adding *season* to 'total USA' factorised x1
+
+```{r forward-selection-season-total-usa_factorised}
+regsubsets_forward_season_total_usa_factorised <- regsubsets(average_price ~ ., data = avocado_tidy_season_total_usa_factorised, method = "forward")
+```
+
+### Running model on tidy initial data
+
+```{r forward-selection-avocado-tidy}
+regsubsets_forward_avocado_tidy <- regsubsets(average_price ~ ., data = avocado_tidy, method = "forward")
+```
+
+
+### Running model on initial data
+
+```{r forward-selection-avocado-df}
+regsubsets_forward_avocado_df <- regsubsets(average_price ~ ., data = avocado_df, method = "forward")
+```
+
+## Examining model results
+
+### **region** in model
+
+```{r}
+sum_regsubsets_forward_region <- summary(regsubsets_forward_region)
+sum_regsubsets_forward_region
+```
+
+```{r fig.width=20}
+plot(regsubsets_forward_region, scale = "adjr2")
+plot(regsubsets_forward_region, scale = "bic")
+```
+
+### **region** in model - factorised x1
+
+```{r}
+sum_regsubsets_forward_region_factorised <- summary(regsubsets_forward_region_factorised)
+sum_regsubsets_forward_region_factorised
+```
+
+```{r fig.width=20}
+plot(regsubsets_forward_region_factorised, scale = "adjr2")
+plot(regsubsets_forward_region_factorised, scale = "bic")
+```
+
+### **total usa** model
+
+```{r}
+sum_regsubsets_forward_total_usa <- summary(regsubsets_forward_total_usa)
+sum_regsubsets_forward_total_usa
+```
+
+```{r}
+plot(regsubsets_forward_total_usa, scale = "adjr2")
+plot(regsubsets_forward_total_usa, scale = "bic")
+```
+
+### **total usa** model - factorised
+
+```{r}
+sum_regsubsets_forward_total_usa_factorised <- summary(regsubsets_forward_total_usa_factorised)
+sum_regsubsets_forward_total_usa_factorised
+```
+
+```{r}
+plot(regsubsets_forward_total_usa_factorised, scale = "adjr2")
+plot(regsubsets_forward_total_usa_factorised, scale = "bic")
+```
+
+### **season** and **total_usa** model
+
+```{r}
+sum_regsubsets_forward_season_total_usa <- summary(regsubsets_forward_season_total_usa)
+sum_regsubsets_forward_season_total_usa
+```
+
+```{r}
+plot(regsubsets_forward_season_total_usa, scale = "adjr2")
+plot(regsubsets_forward_season_total_usa, scale = "bic")
+```
+
+### **season** and **total_usa** model - factorised x1
+
+```{r}
+sum_regsubsets_forward_season_total_usa_factorised <- summary(regsubsets_forward_season_total_usa_factorised)
+sum_regsubsets_forward_season_total_usa_factorised
+```
+
+```{r}
+plot(regsubsets_forward_season_total_usa_factorised, scale = "adjr2")
+plot(regsubsets_forward_season_total_usa_factorised, scale = "bic")
+```
+
+### **initial dataset tidy**
+
+
+```{r}
+sum_regsubsets_forward_avocado_tidy <- summary(regsubsets_forward_avocado_tidy)
+sum_regsubsets_forward_avocado_tidy
+```
+
+### **intital dataset** model
+
+```{r}
+sum_regsubsets_forward_avocado_df <- summary(regsubsets_forward_avocado_df)
+sum_regsubsets_forward_avocado_df
+```
+
+```{r fig.width=20}
+plot(regsubsets_forward_avocado_df, scale = "adjr2")
+plot(regsubsets_forward_avocado_df, scale = "bic")
+```
+
+```{r}
+alias(average_price ~ ., data = avocado_tidy_with_region)
+```
+
+```{r}
+alias(average_price ~ ., data = avocado_tidy_total_usa)
+```
+
+```{r}
+alias(average_price ~ ., data = avocado_df)
+```
+
+```{r}
+alias(average_price ~ ., data = avocado_tidy_season_total_usa)
+```
+
+```{r}
+alias(average_price ~ ., data = avocado_tidy_with_region_factorised)
+```
+
+```{r}
+alias(average_price ~ ., data = avocado_tidy_season_total_usa_factorised)
+```
+
+## Models
+
+### "Region in": predictors - type, year, x1, region
+
+```{r}
+mod_1 <- lm(average_price ~ type + year + x1 + region, data = avocado_tidy_with_region)
+summary(mod_1)
+```
+#### testing the inclusion of region using anova()
+
+```{r}
+mod_1_a <- lm(average_price ~ type + year + x1, data = avocado_tidy_with_region)
+summary(mod_1_a)
+```
+
+```{r}
+anova(mod_1_a, mod_1)
+```
+Including 'region' is significantley better so we keep 'region'
+
+
+```{r}
+par(mfrow = c(2, 2))
+plot(mod_1)
+```
+
+
+### "Region in" + x1 factor: Predictors - type, year, region, x4046
+
+```{r}
+mod_2 <- lm(average_price ~ type + year + x1 + region, data = avocado_tidy_with_region_factorised)
+summary(mod_2)
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(mod_2)
+```
+
+### "Total USA": predictors - x4225, year, x1, large bags, extra large bags, total bags, small bags, x4470
+
+```{r}
+mod_3 <- lm(average_price ~ year + x4225 + x1 + large_bags + x_large_bags + total_bags + small_bags + x4770, data = avocado_tidy_total_usa)
+summary(mod_3)
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(mod_3)
+```
+
+### "Total USA" + x1 factor: predictors - x4225, year, x1
+
+```{r}
+mod_4 <- lm(average_price ~ x4225 + year + x1, data = avocado_tidy_total_usa_factorised)
+summary(mod_4)
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(mod_4)
+```
+
+### "Season": predictors - x4225, year, x1, month
+
+```{r}
+mod_5 <- lm(average_price ~ x4225 + year + x1 + month, data = avocado_tidy_season_total_usa)
+summary(mod_5)
+```
+### "Season" + x1 factor: predictors - x4225, year, month, season
+
+```{r}
+mod_6 <- lm(average_price ~ x4225 + year + month + season, data = avocado_tidy_season_total_usa_factorised)
+summary(mod_6)
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(mod_6)
+```
+
+### "Initial dataset(tidy): predictors - type, year, x1, region, x4046
+
+```{r}
+mod_7 <- lm(average_price ~ type + date + year + region, data = avocado_tidy)
+summary(mod_7)
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(mod_7)
+```
+
+### "Initial dataset": predictors - type, date, year, region
+
+```{r}
+mod_8 <- lm(average_price ~ type + date + year + region, data = avocado_df)
+summary(mod_8)
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(mod_8)
+```
+
+```{r eval=FALSE, include=FALSE}
+glmulti_fit <- glmulti(
+  average_price ~ ., 
+  data = avocado_tidy,
+  level = 2, # 2 = include pairwise interactions, 1 = main effects only (main effect = no pairwise interactions)
+  minsize = 0, # no min size of model
+  maxsize = 1, # -1 = no max size of model
+  marginality = TRUE, # marginality here means the same as 'strongly hierarchical' interactions, i.e. include pairwise interactions only if both predictors present in the model as main effects.
+  method = "g", # the problem is too large for exhaustive search, so search using a genetic algorithm
+  crit = bic, # criteria for model selection is BIC value (lower is better)
+  plotty = FALSE, # don't plot models as function runs
+  report = TRUE, # do produce reports as function runs
+  confsetsize = 100, # return best 100 solutions
+  fitfunction = lm # fit using the `lm` function
+)
+```
+
+
+
+
+```{r}
+p <- avocado_tidy_season_total_usa %>% 
+group_by(year, month, season, type) %>% 
+    select(year, month, season, type, average_price) %>%
+    summarise(mean_average_price = mean(average_price))
+```
+
+```{r}
+ggplot(p) +
+ aes(x = mean_average_price, fill = type) +
+ geom_boxplot() +
+ scale_fill_viridis_d(option = "viridis") +
+ labs(title = "Price covariate with Type") +
+ theme_minimal() +
+ theme(legend.position = "top") +
+  coord_flip()
+```
