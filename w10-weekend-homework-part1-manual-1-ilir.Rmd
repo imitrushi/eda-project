@@ -6,6 +6,7 @@ output:
     toc_float: true
     number_sections: true
     df_print: paged
+    code_folding: hide
     #css: ../../../styles.css
   pdf_document: default
 ---
@@ -33,16 +34,11 @@ As part of the MVP we want you not to just run the code but also have a go at **
 
 Here is what we found looking for information on the 'avocado' data. I am accepting this info as reliable.
 
-"The table represents weekly retail scan data for National retail volume (units) and price. Retail scan data comes directly from retailers’ cash registers based on actual retail sales of Hass avocados. Starting in 2013, the table below reflects an expanded, multi-outlet retail data set. Multi-outlet reporting includes an aggregation of the following channels: grocery, mass, club, drug, dollar and military. The Average Price (of avocados) in the table reflects a per unit (per avocado) cost, even when multiple units (avocados) are sold in bags. The Product Lookup codes (PLU’s) in the table are only for Hass avocados. Other varieties of avocados (e.g. greenskins) are not included in this table."
+"The table represents weekly retail scan data for National retail volume (units) and price. Retail scan data comes directly from retailers' cash registers based on actual retail sales of Hass avocados. Starting in 2013, the table below reflects an expanded, multi-outlet retail data set. Multi-outlet reporting includes an aggregation of the following channels: grocery, mass, club, drug, dollar and military. The Average Price (of avocados) in the table reflects a per unit (per avocado) cost, even when multiple units (avocados) are sold in bags. The Product Lookup codes (PLU's) in the table are only for Hass avocados. Other varieties of avocados (e.g. greenskins) are not included in this table."
 
 Relevant info for understanding 'obscure' variable names:
 
-AveragePrice - the average price of a single avocado
-Region - the city or region of the observation, i.e. where avocados were sold.
-Total Volume - Total number of avocados sold
-4046 - Total number of small avocados sold (PLU 4046)
-4225 - Total number of medium avocados sold (PLU 4225)
-4770 - Total number of large avocados sold (PLU 4770)
+AveragePrice - the average price of a single avocado Region - the city or region of the observation, i.e. where avocados were sold. Total Volume - Total number of avocados sold 4046 - Total number of small avocados sold (PLU 4046) 4225 - Total number of medium avocados sold (PLU 4225) 4770 - Total number of large avocados sold (PLU 4770)
 
 Apparently average price recorded here is not related to bag size so we can drop these variables. Although region may have an impact on price we have decided to drop 'region' when doing manual model development. Instead, we will keep region when testing and automated model development.
 
@@ -64,8 +60,7 @@ library(modelr)
 library(skimr)
 ```
 
-
-### cleaning var names and subsetting 
+### cleaning var names, subsetting
 
 ```{r clean-rename-select}
 avocado_df_exp <- read_csv("data/avocado.csv") %>% 
@@ -78,10 +73,9 @@ avocado_df_exp <- read_csv("data/avocado.csv") %>%
   filter(date <= "2017-12-31")
 ```
 
-
 ```{r engineering-variables}
 avocado_tidy <- avocado_df_exp %>%
-  mutate(month = as.character(month(date))) %>% 
+  mutate(month = as.factor(month(date))) %>% 
   mutate(season = case_when( 
            month == "12" | month == "1" | month == "2" ~ "winter",
            month == "3" | month == "4" | month == "5" ~ "spring",
@@ -91,12 +85,9 @@ avocado_tidy <- avocado_df_exp %>%
   mutate(type = as.factor(type)) %>% 
   mutate(season = as.factor(season)) %>% 
   mutate(year = as.factor(year)) %>% 
-  #mutate(week = as.factor(week))
+  mutate(week = as.factor(week)) %>% 
   select(-date)
 ```
-
-
-------------------------------------------------------------------------
 
 We expect `total volume` to be strongly correlated to avocado sizes so we test and if confirmed drop avocado sizes variables.
 
@@ -105,8 +96,8 @@ avocado_tidy %>%
   select(total_volume:large) %>% 
   ggpairs()
 ```
-It is clear we can use `total volume` as the 'size' variable in our analsysis.
 
+It is clear we can use `total volume` as the 'size' variable in our analsysis.
 
 ```{r drop-size-variables}
 avocado_tidy <- avocado_tidy %>% 
@@ -122,7 +113,7 @@ avocado_tidy %>%
   skim()
 ```
 
-`total volume' is extremely skewed so this may affect our models. We need to look into this.
+`total volume` is extremely skewed so this may affect our models. We need to look into this.
 
 ```{r total-volume-stats}
 total_vol_by_type <- avocado_tidy %>% 
@@ -143,8 +134,6 @@ avocado_tidy_org <- avocado_tidy %>%
   filter(type == "organic") %>% 
   select(-type)
 ```
-
-
 
 ## Visualising our data
 
@@ -184,9 +173,6 @@ conventional
 organic
 ```
 
-
-
-
 ```{r}
 ggplot(avocado_df_exp) +
  aes(x = date, y = average_price, colour = type) +
@@ -196,7 +182,6 @@ ggplot(avocado_df_exp) +
  theme_minimal() +
  facet_wrap(vars(type))
 ```
-
 
 ```{r}
 ggplot(avocado_df_exp) +
@@ -215,16 +200,13 @@ ggplot(avocado_df_exp) +
  theme_minimal()
 ```
 
-
-
-
 ## Model development
 
 ### First Predictor - **month**
 
 ```{r fig.height=20, fig.width=20}
 avocado_tidy_conv %>% 
-   ggpairs(aes(colour = season, alpha = 0.5))
+   ggpairs(aes(colour = season, alpha = 0.5), cardinality_threshold = 55)
 ```
 
 #### average price + total volume
@@ -235,6 +217,7 @@ mod_total_volume
 summary(mod_total_volume)
 
 ```
+
 ```{r}
 par(mfrow = c(2, 2)) 
 plot(mod_total_volume)
@@ -247,6 +230,7 @@ mod_month <- lm(average_price ~ month, data = avocado_tidy_conv)
 mod_month
 summary(mod_month)
 ```
+
 ```{r}
 par(mfrow = c(2, 2)) 
 plot(mod_month)
@@ -259,6 +243,7 @@ mod_week <- lm(average_price ~ week, data = avocado_tidy_conv)
 mod_week
 summary(mod_week)
 ```
+
 ```{r}
 par(mfrow = c(2, 2)) 
 plot(mod_week)
@@ -271,6 +256,7 @@ mod_season <- lm(average_price ~ season, data = avocado_tidy_conv)
 mod_season
 summary(mod_season)
 ```
+
 ```{r}
 par(mfrow = c(2, 2)) 
 plot(mod_season)
@@ -283,6 +269,7 @@ mod_year <- lm(average_price ~ year, data = avocado_tidy_conv)
 mod_year
 summary(mod_year)
 ```
+
 ```{r}
 par(mfrow = c(2, 2)) 
 plot(mod_year)
@@ -327,7 +314,6 @@ par(mfrow = c(2, 2))
 plot(mod_month_year)
 ```
 
-
 #### avg_p + month + week
 
 ```{r}
@@ -340,7 +326,6 @@ summary(mod_month_week)
 par(mfrow = c(2, 2)) 
 plot(mod_month_week)
 ```
-
 
 #### avg_p + month + season
 
@@ -389,12 +374,10 @@ mod_month_year_season
 summary(mod_month_year_season)
 ```
 
-
 ```{r}
 par(mfrow = c(2, 2)) 
 plot(mod_month_year_season)
 ```
-
 
 ### Interactions
 
@@ -404,8 +387,6 @@ average_price_residual <- avocado_tidy_conv %>%
   select(-average_price)
 ```
 
-
-
 ```{r}
 coplot(resid ~ log(total_volume) | month,
        panel = function(x, y, ...){
@@ -414,7 +395,6 @@ coplot(resid ~ log(total_volume) | month,
        },
        data = average_price_residual, columns=6)
 ```
-
 
 ```{r}
 average_price_residual %>%
@@ -429,6 +409,7 @@ average_price_residual %>%
 mod_interaction1 <- lm(average_price ~ month + year + total_volume + month:year, data = avocado_tidy_conv)
 summary(mod_interaction1)
 ```
+
 #### month - total volume
 
 ```{r}
@@ -442,9 +423,7 @@ summary(mod_interaction2)
 mod_interaction3 <- lm(average_price ~ month + year + total_volume + year:total_volume, data = avocado_tidy_conv)
 summary(mod_interaction3)
 ```
+
 ```{r}
 relaimpo::calc.relimp(mod_month_year_total_volume, type = "lmg", rela = TRUE)
 ```
-
-
-
